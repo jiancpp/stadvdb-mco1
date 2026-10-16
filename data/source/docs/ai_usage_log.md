@@ -45,3 +45,12 @@ This log is maintained in strict compliance with the STADVDB Generative AI polic
 - **Task:** Create export script and restoration guide for group members.
 - **Assistance Provided:** Created `export_source.py` and `restore_instructions.md` with automated test restoration procedures.
 - **Independent Verification:** Verified pg_dump syntax, gzipped streaming, and row-count comparison logic.
+
+### Entry 6: Full Year Ingestion, Profiling, and Restore Verification
+- **Task:** Ingest all 12 monthly Parquet files into `nyc_taxi_source`, run statistical profiling, execute 10 validation suites, export compressed SQL dump, and verify restore.
+- **Assistance Provided:** Orchestrated execution of `import_2025.py`, `profile_source.py`, `validate_source.py`, and `export_source.py --restore-only`.
+- **Independent Verification:**
+  - Ingested exactly 48,722,602 rows across 12 monthly files (0 mismatches).
+  - Validated all 10 test suites in `validation_results.csv` with PASS status.
+  - Successfully exported 1.05 GB compressed SQL dump (`nyc_taxi_source_20261016_231753.sql.gz`).
+  - Executed restore test into `nyc_taxi_source_restore_test`, verifying that all 48,722,602 rows were restored identically. Cleaned up temporary test database.

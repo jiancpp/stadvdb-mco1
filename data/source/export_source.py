@@ -73,7 +73,8 @@ def export_database():
         "-d", SOURCE_DB,
         "--clean",
         "--if-exists",
-        "--create",
+        "--no-owner",
+        "--no-privileges",
         "--verbose"
     ]
 
@@ -119,19 +120,10 @@ def run_restore_test(dump_path):
     if PGPASSWORD:
         env["PGPASSWORD"] = PGPASSWORD
 
-    cmd = [
-        psql,
-        "-h", PGHOST,
-        "-p", PGPORT,
-        "-U", PGUSER,
-        "-d", test_db,
-        "-v", "ON_ERROR_STOP=1"
-    ]
+    cmd = f'gunzip -c "{dump_path}" | "{psql}" -h "{PGHOST}" -p "{PGPORT}" -U "{PGUSER}" -d "{test_db}" -v ON_ERROR_STOP=1'
 
-    import gzip
     t0 = time.time()
-    with gzip.open(dump_path, "rb") as gz_in:
-        proc = subprocess.run(cmd, input=gz_in.read(), capture_output=True, env=env)
+    proc = subprocess.run(cmd, shell=True, capture_output=True, env=env)
 
     if proc.returncode != 0:
         print(f"[ERROR] Restore failed with code {proc.returncode}:\n{proc.stderr.decode()}", file=sys.stderr)
@@ -242,6 +234,16 @@ Expected Monthly Files: **12 files (January through December 2025)**
     print(f"Saved: {doc_path}")
 
 def main():
+    if "--restore-only" in sys.argv:
+        dumps = sorted(DUMPS_DIR.glob("nyc_taxi_source_*.sql.gz"))
+        if not dumps:
+            print("[ERROR] No dumps found in dumps/ directory.", file=sys.stderr)
+            sys.exit(1)
+        latest_dump = dumps[-1]
+        print(f"Testing restore using existing dump: {latest_dump.name}")
+        run_restore_test(latest_dump)
+        return
+
     dump_path = export_database()
     if dump_path:
         generate_restore_instructions(dump_path.name)
