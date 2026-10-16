@@ -61,6 +61,21 @@ conn = psycopg.connect(
 
 ---
 
+## Viewing Data Rows in GUI / IDE
+
+To view records in an interactive grid:
+- **In VS Code (PostgreSQL Extension):**
+  1. Expand `Databases` ➔ `nyc_taxi_source` ➔ `Schemas` ➔ `public` ➔ `Tables`.
+  2. Right-click `yellow_tripdata_2025` ➔ click **Select Top 1000** (or **View Data**).
+- **In pgAdmin 4:**
+  - Right-click `yellow_tripdata_2025` ➔ **View/Edit Data** ➔ **First 100 Rows**.
+- **Or via SQL Query:**
+  ```sql
+  SELECT * FROM yellow_tripdata_2025 LIMIT 50;
+  ```
+
+---
+
 ## Important Documentation
 
 - **ETL Integration & Data Quality Notes:** [`data/source/docs/etl_handoff.md`](data/source/docs/etl_handoff.md)  
