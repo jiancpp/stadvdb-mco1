@@ -1,0 +1,3 @@
+Test_ID,Test_Objective,Test_Procedure,Expected_Result,Actual_Result,Status,Supporting_Evidence
+VAL-01,Parquet Source Files Verification,Verify all 12 monthly Parquet files exist in data/,All 12 files present,12/12 files found,PASS,"Files found: yellow_tripdata_2025-01.parquet, yellow_tripdata_2025-02.parquet, yellow_tripdata_2025-03.parquet... and 9 more"
+VAL-02,PostgreSQL Connectivity,Connect to PostgreSQL server,Successful connection,Connection failed: connection failed: fe_sendauth: no password supplied,FAIL,connection failed: fe_sendauth: no password supplied
