@@ -103,7 +103,20 @@ def ensure_database_and_schema():
     with get_connection(dbname=SOURCE_DB, autocommit=True) as conn:
         with conn.cursor() as cur:
             cur.execute(schema_file.read_text())
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] Schema verified successfully.")
+            # Populate taxi_zone_lookup if empty
+            cur.execute("SELECT COUNT(*) FROM taxi_zone_lookup;")
+            if cur.fetchone()[0] == 0:
+                zone_csv = DATA_DIR / "taxi_zone_lookup.csv"
+                if zone_csv.exists():
+                    import csv
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] Loading {zone_csv.name} into taxi_zone_lookup...")
+                    with open(zone_csv, "r", encoding="utf-8") as f:
+                        reader = csv.reader(f)
+                        next(reader)
+                        with cur.copy("COPY taxi_zone_lookup (locationid, borough, zone, service_zone) FROM STDIN WITH (FORMAT CSV)") as copy_zone:
+                            for row in reader:
+                                copy_zone.write(','.join([f'\"{col}\"' for col in row]) + '\n')
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] Schema and lookup tables verified successfully.")
 
 def calculate_md5(filepath, chunk_size=8192 * 1024):
     """Calculates MD5 checksum of a file efficiently."""

@@ -64,6 +64,33 @@ Tracks status, execution runtime, and row-count verification per monthly file.
 | `execution_time_seconds` | `NUMERIC(10,2)` | Ingestion runtime |
 | `error_message` | `TEXT` | Logged error message if failure occurred |
 
+### Reference Table: `taxi_zone_lookup` (265 zones)
+
+Used to populate the **`Dim_Location` / `Dim_Zone`** dimension table in the warehouse.
+
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| `locationid` | `INTEGER PRIMARY KEY` | Zone ID (1 to 265) matching `pulocationid` and `dolocationid` |
+| `borough` | `VARCHAR(50)` | NYC Borough (e.g., `Manhattan`, `Queens`, `Brooklyn`, `Bronx`, `Staten Island`, `EWR`) |
+| `zone` | `VARCHAR(100)` | Neighborhood / Zone name (e.g., `JFK Airport`, `Times Sq/Theatre District`) |
+| `service_zone` | `VARCHAR(50)` | Service classification (`Yellow Zone`, `Boro Zone`, `Airports`, `EWR`) |
+
+#### Example SQL Join for ETL extraction:
+```sql
+SELECT 
+    t.trip_id,
+    t.tpep_pickup_datetime,
+    t.fare_amount,
+    pz.borough AS pickup_borough,
+    pz.zone AS pickup_zone,
+    dz.borough AS dropoff_borough,
+    dz.zone AS dropoff_zone
+FROM yellow_tripdata_2025 t
+LEFT JOIN taxi_zone_lookup pz ON t.pulocationid = pz.locationid
+LEFT JOIN taxi_zone_lookup dz ON t.dolocationid = dz.locationid
+LIMIT 5;
+```
+
 ---
 
 ## 3. Connection Configuration

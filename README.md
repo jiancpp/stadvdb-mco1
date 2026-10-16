@@ -9,8 +9,8 @@ The source database is prepared, verified, and ready for ETL and Data Warehouse 
 ## Source Database Details
 
 - **Database:** `nyc_taxi_source`
-- **Source Table:** `yellow_tripdata_2025`
-- **Total Records:** `48,722,602` rows (all 12 monthly files imported)
+- **Source Table:** `yellow_tripdata_2025` (`48,722,602` rows, all 12 monthly files imported)
+- **Reference Table:** `taxi_zone_lookup` (265 official NYC zones: Borough, Zone, Service Zone)
 - **Primary Key:** `trip_id`
 - **Data Lineage:** `source_file` (e.g., `yellow_tripdata_2025-01.parquet`)
 
