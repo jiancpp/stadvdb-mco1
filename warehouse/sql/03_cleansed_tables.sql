@@ -2,10 +2,32 @@
 -- Creation of Tables for Silver Layer
 -- ==============================================
 
+CREATE TABLE IF NOT EXISTS silver.ref_location (
+    location_id     SMALLINT PRIMARY KEY,
+    borough         VARCHAR(50) NOT NULL,
+    location_zone   VARCHAR(100) NOT NULL,
+    service_zone    VARCHAR(50) NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS silver.ref_providers (
+    vendor_id       SMALLINT PRIMARY KEY,
+    provider_name   VARCHAR(100) NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS silver.ref_ratecode (
+    ratecode_id    SMALLINT PRIMARY KEY,
+    ratecode_name  VARCHAR(100) NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS silver.ref_payment_type (
+    type_id         SMALLINT PRIMARY KEY,
+    payment_type    VARCHAR(100) NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS silver.yellow_taxi_trips (
     -- Data lineage
     bronze_trip_id BIGINT PRIMARY KEY
-        REFERENCES bronze.yellow_taxi_trips(trip_id),
+        REFERENCES bronze.yellow_taxi_trips(source_trip_id),
 
     -- Trip Identifiers
     vendor_id               SMALLINT NOT NULL,
@@ -66,15 +88,15 @@ CREATE TABLE IF NOT EXISTS silver.yellow_taxi_trips (
     -- Reference relationships
     CONSTRAINT fk_silver_vendor
         FOREIGN KEY (vendor_id)
-        REFERENCES silver.ref_vendor(vendor_id),
+        REFERENCES silver.ref_providers(vendor_id),
 
     CONSTRAINT fk_silver_ratecode
         FOREIGN KEY (ratecode_id)
         REFERENCES silver.ref_ratecode(ratecode_id),
 
     CONSTRAINT fk_silver_payment
-        FOREIGN KEY (payment_type_id)
-        REFERENCES silver.ref_payment_type(payment_type_id),
+        FOREIGN KEY (payment_type)
+        REFERENCES silver.ref_payment_type(type_id),
 
     CONSTRAINT fk_silver_pickup_location
         FOREIGN KEY (pickup_location_id)
@@ -86,24 +108,45 @@ CREATE TABLE IF NOT EXISTS silver.yellow_taxi_trips (
 
 );
 
-CREATE TABLE IF NOT EXISTS silver.ref_location (
-    location_id     SMALLINT PRIMARY KEY,
-    Borough         VARCHAR(50) NOT NULL,
-    location_zone   VARCHAR(100) NOT NULL,
-    service_zone    VARCHAR(50) NOT NULL
-);
+-- ============================================
+-- 2. Plugging data for reference tables
+-- ============================================
 
-CREATE TABLE IF NOT EXISTS silver.ref_providers (
-    vendor_id       SMALLINT PRIMARY KEY,
-    provider_name   VARCHAR(100) NOT NULL
-);
+/* Note: Location zones are to be ingested from CSV */
 
-CREATE TABLE IF NOT EXISTS silver.ref_ratecode (
-    ratecode_id    SMALLINT PRIMARY KEY,
-    ratecode_name  VARCHAR(100) NOT NULL
-);
+INSERT INTO silver.ref_providers (vendor_id, provider_name)
+VALUES
+    (1, 'Creative Mobile Technologies, LLC'),
+    (2, 'Curb Mobility, LLC'),
+    (6, 'Myle Technologies Inc'),
+    (7, 'Helix')
+ON CONFLICT (vendor_id)
+DO UPDATE SET
+    provider_name = EXCLUDED.provider_name;
 
-CREATE TABLE IF NOT EXISTS silver.ref_payment_type (
-    type_id         SMALLINT PRIMARY KEY,
-    payment_type    VARCHAR(100) NOT NULL
-);
+
+INSERT INTO silver.ref_ratecode (ratecode_id, ratecode_name)
+VALUES
+    (1, 'Standard rate'),
+    (2, 'JFK'),
+    (3, 'Newark'),
+    (4, 'Nassau or Westchester'),
+    (5, 'Negotiated fare'),
+    (6, 'Group ride'),
+    (99, 'Null/unknown')
+ON CONFLICT (ratecode_id)
+DO UPDATE SET
+    ratecode_name = EXCLUDED.ratecode_name;
+
+INSERT INTO silver.ref_payment_type (type_id, payment_type)
+VALUES
+    (0, 'Flex Fare Trip'),
+    (1, 'Credit Card'),
+    (2, 'Cash'),
+    (3, 'No charge'),
+    (4, 'Dispute'),
+    (5, 'Unknown'),
+    (6, 'Voided trip')
+ON CONFLICT (type_id)
+DO UPDATE SET
+    payment_type = EXCLUDED.payment_type;
