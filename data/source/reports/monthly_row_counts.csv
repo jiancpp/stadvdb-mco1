@@ -1,0 +1,13 @@
+Filename,Size_Bytes,Size_MB,Parquet_Rows,Imported_DB_Rows,Row_Diff,Match_Status
+yellow_tripdata_2025-01.parquet,59158238,56.42,3475226,3475226,0,MATCH
+yellow_tripdata_2025-02.parquet,60343086,57.55,3577543,3577543,0,MATCH
+yellow_tripdata_2025-03.parquet,69964745,66.72,4145257,4145257,0,MATCH
+yellow_tripdata_2025-04.parquet,67352824,64.23,3970553,3970553,0,MATCH
+yellow_tripdata_2025-05.parquet,77837865,74.23,4591845,4591845,0,MATCH
+yellow_tripdata_2025-06.parquet,73542954,70.14,4322960,4322960,0,MATCH
+yellow_tripdata_2025-07.parquet,66943728,63.84,3898963,3898963,0,MATCH
+yellow_tripdata_2025-08.parquet,62293743,59.41,3574091,3574091,0,MATCH
+yellow_tripdata_2025-09.parquet,72432945,69.08,4251015,4251015,0,MATCH
+yellow_tripdata_2025-10.parquet,75267589,71.78,4428699,4428699,0,MATCH
+yellow_tripdata_2025-11.parquet,71134255,67.84,4181444,4181444,0,MATCH
+yellow_tripdata_2025-12.parquet,73701327,70.29,4305006,4305006,0,MATCH

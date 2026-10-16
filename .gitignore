@@ -1,0 +1,24 @@
+# Environment variables & secrets
+.env
+.env.*
+!.env.example
+
+# Python cache & virtualenvs
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+
+# Database dumps & temporary test exports
+*.dump
+*.sql.gz
+data/source/dumps/
+data/source/restore_test/
+
+# OS metadata
+.DS_Store
+Thumbs.db
