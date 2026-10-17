@@ -19,8 +19,9 @@ from dotenv import load_dotenv
 import pyarrow.parquet as pq
 import psycopg
 
-# Load environment configuration
-env_path = Path(__file__).parent / ".env"
+# Load environment configuration (.env is in the project root)
+ROOT_DIR = Path(__file__).resolve().parent.parent
+env_path = ROOT_DIR / ".env"
 if env_path.exists():
     load_dotenv(dotenv_path=env_path)
 else:
