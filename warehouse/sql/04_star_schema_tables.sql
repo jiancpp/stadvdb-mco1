@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS gold.dim_location (
 
     location_id     SMALLINT NOT NULL UNIQUE,
     borough         VARCHAR(50) NOT NULL,
-    locaation_zone  VARCHAR(100) NOT NULL,
+    location_zone  VARCHAR(100) NOT NULL,
     service_zone    VARCHAR(50) NOT NULL
 );
 
