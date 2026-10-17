@@ -5,3 +5,5 @@ python-dotenv>=1.0.0
 pandas>=2.0.0
 sqlalchemy
 config
+fastapi
+univorn
