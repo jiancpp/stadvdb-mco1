@@ -11,8 +11,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 import psycopg
 
-# Load environment variables from .env in the same directory if it exists
-env_path = Path(__file__).parent / ".env"
+# Load environment configuration (.env is in the project root)
+ROOT_DIR = Path(__file__).resolve().parent.parent
+env_path = ROOT_DIR / ".env"
 if env_path.exists():
     load_dotenv(dotenv_path=env_path)
 else:

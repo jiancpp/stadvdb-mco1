@@ -45,7 +45,7 @@ data/
   ```
 
 ### 2. Configure Credentials
-Copy `.env.example` to `.env` in this directory:
+Copy `.env.example` to `.env` in the root directory:
 ```bash
 cp .env.example .env
 ```
