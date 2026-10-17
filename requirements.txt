@@ -1,5 +1,7 @@
-# STADVDB MCO1 - Source Database Requirements
+# STADVDB MCO1 Requirements
 psycopg[binary]>=3.1.18
 pyarrow>=15.0.0
 python-dotenv>=1.0.0
 pandas>=2.0.0
+sqlalchemy
+config

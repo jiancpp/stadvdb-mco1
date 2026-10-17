@@ -1,4 +1,0 @@
-sqlalchemy
-psycopg[binary]
-dotenv
-config
