@@ -65,6 +65,8 @@ def run(sql: str, params: Optional[dict] = None) -> list[dict]:
 
 # ------------------------------------------------------------------ filters
 DayType = Literal["all", "weekday", "weekend"]
+MIN_DATE = date(2025, 1, 1)
+MAX_DATE = date(2025, 12, 31)
 
 
 def _key(d: date) -> int:
@@ -72,11 +74,13 @@ def _key(d: date) -> int:
 
 
 def filters(
-    start: date = Query(date(2025, 1, 1)),
-    end: date = Query(date(2025, 12, 31)),
+    start: date = Query(MIN_DATE, ge=MIN_DATE, le=MAX_DATE),
+    end: date = Query(MAX_DATE, ge=MIN_DATE, le=MAX_DATE),
     borough: Optional[str] = None,
     day_type: DayType = "all",
 ) -> dict:
+    if borough in ("N/A", "Unknown"):
+        borough = None
     return {
         "start": _key(start),
         "end": _key(end),
@@ -103,7 +107,8 @@ WHERE a.date_key BETWEEN %({lo})s AND %({hi})s AND {DAY} AND {BOROUGH}"""
 
 SQL_BOROUGHS = """
 SELECT DISTINCT borough FROM gold.dim_location
-WHERE location_key <> -1 AND borough IS NOT NULL ORDER BY 1"""
+WHERE location_key <> -1 AND borough IS NOT NULL AND borough NOT IN ('N/A', 'Unknown')
+ORDER BY 1"""
 
 SQL_BOUNDS = "SELECT MIN(date_key) AS lo, MAX(date_key) AS hi FROM mart.agg_pickup_zone_day_band"
 
@@ -300,13 +305,11 @@ def _slow_window(pts: list[dict]):
 @router.get("/filters")
 def get_filters():
     b = run(SQL_BOROUGHS)
-    r = run(SQL_BOUNDS)[0]
-
-    def iso(k):
-        k = int(k)
-        return f"{k // 10000:04d}-{k // 100 % 100:02d}-{k % 100:02d}"
-
-    return {"boroughs": [x["borough"] for x in b], "min_date": iso(r["lo"]), "max_date": iso(r["hi"])}
+    return {
+        "boroughs": [x["borough"] for x in b if x["borough"] not in ("N/A", "Unknown")],
+        "min_date": "2025-01-01",
+        "max_date": "2025-12-31",
+    }
 
 
 @router.get("/kpis")
