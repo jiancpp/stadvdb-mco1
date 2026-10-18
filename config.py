@@ -19,4 +19,4 @@ WAREHOUSE_DB = {
     "password": os.getenv("WAREHOUSE_DB_PASSWORD"),
 }
 
-IS_ETL_DEVELOPER = os.getenv("IS_ETL_DEVELOPER")
+IS_ETL_DEVELOPER = int(os.getenv("IS_ETL_DEVELOPER", 0))

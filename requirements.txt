@@ -6,4 +6,4 @@ pandas>=2.0.0
 sqlalchemy
 config
 fastapi
-univorn
+uvicorn
