@@ -43,6 +43,37 @@ ORDER BY d.year, d.month;
 EXPLAIN ANALYZE
 EXECUTE stmt_kpi_monthly(20250101, 20251231, 'all', NULL);
 
+-- Optimized ========================================================
+DEALLOCAtE stmt_kpi_monthly;
+
+
+PREPARE stmt_kpi_monthly (int, int, text, text) AS
+SELECT
+    d.year,
+    d.month,
+    SUM(a.trips) AS trips,
+    SUM(a.revenue) AS revenue,
+    SUM(a.duration_min) AS duration_min,
+    SUM(a.distance_mi) AS distance_mi
+FROM mart.agg_pickup_zone_day_band a
+JOIN gold.dim_date d
+    ON d.date_key = a.date_key
+JOIN gold.dim_location l
+    ON l.location_key = a.location_key
+WHERE a.date_key BETWEEN $1 AND $2
+  AND (
+      $3 = 'all'
+      OR d.is_weekend = ($3 = 'weekend')
+  )
+  AND (
+      $4 IS NULL
+      OR l.borough = $4
+  )
+GROUP BY d.year, d.month
+ORDER BY d.year, d.month;
+
+EXPLAIN ANALYZE
+EXECUTE stmt_kpi_monthly(20250101, 20251231, 'all', NULL);
 
 -- 2b. SQL_KPI_DAILY
 PREPARE stmt_kpi_daily (int, int, text, text) AS
@@ -58,6 +89,31 @@ WHERE a.date_key BETWEEN $1 AND $2
   AND ($4 IS NULL OR l.borough = $4)
 GROUP BY d.date_key 
 ORDER BY d.date_key;
+
+EXPLAIN ANALYZE
+EXECUTE stmt_kpi_daily(20250101, 20251231, 'all', NULL);
+
+-- Optimized ========================================================
+
+DEALLOCATE stmt_kpi_daily;
+
+PREPARE stmt_kpi_daily (int, int, text, text) AS
+SELECT 
+    a.date_key, 
+    SUM(a.trips) AS trips, 
+    SUM(a.revenue) AS revenue
+FROM mart.agg_pickup_zone_day_band a
+LEFT JOIN gold.dim_date d 
+    ON d.date_key = a.date_key 
+    AND $3 != 'all'
+LEFT JOIN gold.dim_location l 
+    ON l.location_key = a.location_key 
+    AND $4 IS NOT NULL
+WHERE a.date_key BETWEEN $1 AND $2
+    AND ($3 = 'all' OR d.is_weekend = ($3 = 'weekend'))
+    AND ($4 IS NULL OR l.borough = $4)
+GROUP BY a.date_key 
+ORDER BY a.date_key;
 
 EXPLAIN ANALYZE
 EXECUTE stmt_kpi_daily(20250101, 20251231, 'all', NULL);
@@ -80,6 +136,28 @@ WHERE a.date_key BETWEEN $1 AND $2
 EXPLAIN ANALYZE
 EXECUTE stmt_kpi_q1(20250101, 20250331, 'all', NULL);
 
+-- Optimized
+CREATE INDEX idx_dim_location_lookup 
+ON gold.dim_location (location_key) 
+INCLUDE (borough);
+
+DEALLOCATE stmt_kpi_q1;
+
+PREPARE stmt_kpi_q1 (int, int, text, text) AS
+SELECT 
+    SUM(a.revenue) AS revenue, 
+    SUM(a.duration_min) AS duration_min, 
+    SUM(a.distance_mi) AS distance_mi
+FROM mart.agg_pickup_zone_day_band a
+JOIN gold.dim_date d ON d.date_key = a.date_key
+JOIN gold.dim_location l ON l.location_key = a.location_key
+WHERE a.date_key BETWEEN $1 AND $2
+  AND ($3 = 'all' OR d.is_weekend::boolean = ($3 = 'weekend'))
+  AND ($4 IS NULL OR l.borough = $4);
+
+-- Example call passing Q1 date key range
+EXPLAIN ANALYZE
+EXECUTE stmt_kpi_q1(20250101, 20250331, 'all', NULL);
 
 -- 3. Where to Be: Zone & Borough Flow
 -- Parameters:
