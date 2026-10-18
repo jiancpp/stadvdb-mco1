@@ -5,7 +5,14 @@ and generates a performance comparison table for the technical report.
 """
 import os
 import re
+import sys
 import time
+from pathlib import Path
+
+# Add project root to sys.path so config.py and connections.py are importable regardless of CWD
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 try:
     import psycopg
 except ImportError:
@@ -43,6 +50,56 @@ def run_benchmarks():
     cur = conn.cursor()
 
     queries = [
+        ("1a. SQL_BOROUGHS", """
+            SELECT DISTINCT borough 
+            FROM gold.dim_location
+            WHERE location_key <> -1 
+              AND borough IS NOT NULL 
+            ORDER BY 1;
+        """),
+        ("1b. SQL_BOUNDS", """
+            SELECT 
+                MIN(date_key) AS lo, 
+                MAX(date_key) AS hi 
+            FROM mart.agg_pickup_zone_day_band;
+        """),
+        ("2a. SQL_KPI_MONTHLY", """
+            SELECT 
+                d.year, 
+                d.month, 
+                SUM(a.trips) AS trips, 
+                SUM(a.revenue) AS revenue,
+                SUM(a.duration_min) AS duration_min, 
+                SUM(a.distance_mi) AS distance_mi
+            FROM mart.agg_pickup_zone_day_band a
+            JOIN gold.dim_date d ON d.date_key = a.date_key
+            JOIN gold.dim_location l ON l.location_key = a.location_key
+            WHERE a.date_key BETWEEN 20250101 AND 20251231
+            GROUP BY d.year, d.month 
+            ORDER BY d.year, d.month;
+        """),
+        ("2b. SQL_KPI_DAILY", """
+            SELECT 
+                d.date_key, 
+                SUM(a.trips) AS trips, 
+                SUM(a.revenue) AS revenue
+            FROM mart.agg_pickup_zone_day_band a
+            JOIN gold.dim_date d ON d.date_key = a.date_key
+            JOIN gold.dim_location l ON l.location_key = a.location_key
+            WHERE a.date_key BETWEEN 20250101 AND 20250131
+            GROUP BY d.date_key 
+            ORDER BY d.date_key;
+        """),
+        ("2c. SQL_KPI_Q1", """
+            SELECT 
+                SUM(a.revenue) AS revenue, 
+                SUM(a.duration_min) AS duration_min, 
+                SUM(a.distance_mi) AS distance_mi
+            FROM mart.agg_pickup_zone_day_band a
+            JOIN gold.dim_date d ON d.date_key = a.date_key
+            JOIN gold.dim_location l ON l.location_key = a.location_key
+            WHERE a.date_key BETWEEN 20250101 AND 20250331;
+        """),
         ("3a. SQL_ZONES", """
             WITH filtered_dates AS (
                 SELECT date_key FROM gold.dim_date
