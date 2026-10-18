@@ -23,29 +23,11 @@ FROM mart.agg_pickup_zone_day_band;
 -- $4 = borough (Borough name or NULL)
 
 -- 2a. SQL_KPI_MONTHLY
-PREPARE stmt_kpi_monthly (int, int, text, text) AS
-SELECT 
-    d.year, 
-    d.month, 
-    SUM(a.trips) AS trips, 
-    SUM(a.revenue) AS revenue,
-    SUM(a.duration_min) AS duration_min, 
-    SUM(a.distance_mi) AS distance_mi
-FROM mart.agg_pickup_zone_day_band a
-JOIN gold.dim_date d ON d.date_key = a.date_key
-JOIN gold.dim_location l ON l.location_key = a.location_key
-WHERE a.date_key BETWEEN $1 AND $2
-  AND ($3 = 'all' OR d.is_weekend::boolean = ($3 = 'weekend'))
-  AND ($4 IS NULL OR l.borough = $4)
-GROUP BY d.year, d.month 
-ORDER BY d.year, d.month;
-
-EXPLAIN ANALYZE
-EXECUTE stmt_kpi_monthly(20250101, 20251231, 'all', NULL);
-
--- Optimized ========================================================
-DEALLOCAtE stmt_kpi_monthly;
-
+-- Optimization Strategies Applied:
+-- 1. Predicate Pushdown: Filter the date dimension by the requested date range and day type before joining it with the aggregated fact table.
+-- 2. Pre-aggregation: Perform aggregation directly on the monthly KPI level using the existing mart.agg_pickup_zone_day_band table, avoiding unnecessary row-level fact processing.
+-- 3. Conditional Filtering: Apply day-type and borough filters within their respective dimension CTEs to simplify the main aggregation query.
+-- 4. Type Cast Elimination: Remove unnecessary boolean casting on is_weekend to reduce expression evaluation overhead.
 
 PREPARE stmt_kpi_monthly (int, int, text, text) AS
 SELECT
@@ -76,26 +58,11 @@ EXPLAIN ANALYZE
 EXECUTE stmt_kpi_monthly(20250101, 20251231, 'all', NULL);
 
 -- 2b. SQL_KPI_DAILY
-PREPARE stmt_kpi_daily (int, int, text, text) AS
-SELECT 
-    d.date_key, 
-    SUM(a.trips) AS trips, 
-    SUM(a.revenue) AS revenue
-FROM mart.agg_pickup_zone_day_band a
-JOIN gold.dim_date d ON d.date_key = a.date_key
-JOIN gold.dim_location l ON l.location_key = a.location_key
-WHERE a.date_key BETWEEN $1 AND $2
-  AND ($3 = 'all' OR d.is_weekend::boolean = ($3 = 'weekend'))
-  AND ($4 IS NULL OR l.borough = $4)
-GROUP BY d.date_key 
-ORDER BY d.date_key;
-
-EXPLAIN ANALYZE
-EXECUTE stmt_kpi_daily(20250101, 20251231, 'all', NULL);
-
--- Optimized ========================================================
-
-DEALLOCATE stmt_kpi_daily;
+-- Optimization Strategies Applied:
+-- 1. Unnecessary Join Elimination: Use conditional LEFT JOIN operations to avoid matching dimension records when the corresponding filter is not needed.
+-- 2. Join Predicate Pushdown: Move day-type and borough conditions into their respective join predicates, reducing unnecessary dimension lookups.
+-- 3. Type Cast Elimination: Remove unnecessary boolean casting on is_weekend.
+-- 4. Fact Table Grouping: Group directly by a.date_key, avoiding the need to retrieve the date key from the dimension table.
 
 PREPARE stmt_kpi_daily (int, int, text, text) AS
 SELECT 
@@ -120,23 +87,11 @@ EXECUTE stmt_kpi_daily(20250101, 20251231, 'all', NULL);
 
 
 -- 2c. SQL_KPI_Q1 Baseline
-PREPARE stmt_kpi_q1 (int, int, text, text) AS
-SELECT 
-    SUM(a.revenue) AS revenue, 
-    SUM(a.duration_min) AS duration_min, 
-    SUM(a.distance_mi) AS distance_mi
-FROM mart.agg_pickup_zone_day_band a
-JOIN gold.dim_date d ON d.date_key = a.date_key
-JOIN gold.dim_location l ON l.location_key = a.location_key
-WHERE a.date_key BETWEEN $1 AND $2
-  AND ($3 = 'all' OR d.is_weekend::boolean = ($3 = 'weekend'))
-  AND ($4 IS NULL OR l.borough = $4);
+-- Optimization Strategies Applied:
+-- 1. Composite Indexing: Introduce an index on gold.dim_location (location_key) to support location dimension lookups.
+-- 2. Covering Index: Include borough in the index using INCLUDE (borough) to potentially satisfy borough attribute retrieval directly from the index.
+-- 3. Index-Only Scan Potential: Allow PostgreSQL to retrieve the indexed location key and borough without necessarily accessing the underlying table heap.
 
--- Example call passing Q1 date key range
-EXPLAIN ANALYZE
-EXECUTE stmt_kpi_q1(20250101, 20250331, 'all', NULL);
-
--- Optimized
 CREATE INDEX idx_dim_location_lookup 
 ON gold.dim_location (location_key) 
 INCLUDE (borough);
@@ -152,7 +107,7 @@ FROM mart.agg_pickup_zone_day_band a
 JOIN gold.dim_date d ON d.date_key = a.date_key
 JOIN gold.dim_location l ON l.location_key = a.location_key
 WHERE a.date_key BETWEEN $1 AND $2
-  AND ($3 = 'all' OR d.is_weekend::boolean = ($3 = 'weekend'))
+  AND ($3 = 'all' OR d.is_weekend = ($3 = 'weekend'))
   AND ($4 IS NULL OR l.borough = $4);
 
 -- Example call passing Q1 date key range
