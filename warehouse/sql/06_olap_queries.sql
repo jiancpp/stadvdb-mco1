@@ -280,29 +280,17 @@ EXECUTE stmt_corridors(202501, 202512, 'all', NULL);
 -- $2 = end   (YYYYMMDD integer, e.g. 20251231)
 -- $3 = day_type ('all', 'weekday', or 'weekend')
 -- $4 = borough (Borough name or NULL)
--- Optimization Strategies Applied:
---   1. Predicate Pushdown: Pre-filter date_key and location_key to reduce scan volume.
---   2. Safe Division: Protect against division by zero using NULLIF.
 PREPARE stmt_trip_length (int, int, text, text) AS
-WITH filtered_dates AS (
-    SELECT date_key 
-    FROM gold.dim_date
-    WHERE date_key BETWEEN $1 AND $2
-      AND ($3 = 'all' OR is_weekend = ($3 = 'weekend'))
-),
-filtered_locations AS (
-    SELECT location_key
-    FROM gold.dim_location
-    WHERE location_key <> -1
-      AND ($4 IS NULL OR borough = $4)
-)
 SELECT 
     a.length_band, 
     SUM(a.trips) AS trips,
-    SUM(a.revenue) / NULLIF(SUM(a.duration_min) / 60.0, 0) AS rev_per_hour
+    SUM(a.revenue) / (SUM(a.duration_min) / 60.0) AS rev_per_hour
 FROM mart.agg_pickup_zone_day_band a
-JOIN filtered_dates d     ON d.date_key = a.date_key
-JOIN filtered_locations l ON l.location_key = a.location_key
+JOIN gold.dim_date d ON d.date_key = a.date_key
+JOIN gold.dim_location l ON l.location_key = a.location_key
+WHERE a.date_key BETWEEN $1 AND $2 
+  AND ($3 = 'all' OR d.is_weekend::boolean = ($3 = 'weekend')) 
+  AND ($4 IS NULL OR l.borough = $4)
 GROUP BY a.length_band 
 ORDER BY a.length_band;
 
@@ -318,24 +306,17 @@ EXECUTE stmt_trip_length(20250101, 20251231, 'all', NULL);
 -- $4 = borough (Borough name or NULL)
 
 -- 5a. SQL_SLOW_HOUR (Speed vs Yield by hour)
--- Optimization Strategies Applied:
---   1. Denormalized Mart: Uses mart.agg_borough_day_hour directly, avoiding dim_location joins.
---   2. Compact Date Filtering: Isolates date range and weekend condition in a small CTE.
 PREPARE stmt_slow_hour (int, int, text, text) AS
-WITH filtered_dates AS (
-    SELECT date_key 
-    FROM gold.dim_date
-    WHERE date_key BETWEEN $1 AND $2
-      AND ($3 = 'all' OR is_weekend = ($3 = 'weekend'))
-)
 SELECT 
     h.hour AS bucket, 
     SUM(h.trips) AS trips,
-    SUM(h.revenue)     / NULLIF(SUM(h.duration_min) / 60.0, 0) AS rev_per_hour,
-    SUM(h.distance_mi) / NULLIF(SUM(h.duration_min) / 60.0, 0) AS avg_mph
+    SUM(h.revenue) / (SUM(h.duration_min) / 60.0) AS rev_per_hour,
+    SUM(h.distance_mi) / (SUM(h.duration_min) / 60.0) AS avg_mph
 FROM mart.agg_borough_day_hour h
-JOIN filtered_dates d ON d.date_key = h.date_key
-WHERE ($4 IS NULL OR h.borough = $4)
+JOIN gold.dim_date d ON d.date_key = h.date_key
+WHERE h.date_key BETWEEN $1 AND $2
+  AND ($4 IS NULL OR h.borough = $4) 
+  AND ($3 = 'all' OR d.is_weekend::boolean = ($3 = 'weekend'))
 GROUP BY h.hour 
 ORDER BY h.hour;
 
