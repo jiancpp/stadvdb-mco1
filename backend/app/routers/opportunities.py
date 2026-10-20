@@ -93,8 +93,17 @@ def filters(
 
 # ------------------------------------------------------------------ SQL
 # d = gold.dim_date, l = gold.dim_location, a = mart.agg_pickup_zone_day_band
-DAY = "(%(day_type)s = 'all' OR d.is_weekend::boolean = (%(day_type)s = 'weekend'))"
+# No ::boolean cast on is_weekend (it is already boolean in dim_date and the mart tables).
+DAY = "(%(day_type)s = 'all' OR d.is_weekend = (%(day_type)s = 'weekend'))"
 BOROUGH = "(%(borough)s IS NULL OR l.borough = %(borough)s)"
+
+# Date predicate pushed into a small CTE (one scan of dim_date, reused by every branch).
+FILTERED_DATES = """filtered_dates AS (
+    SELECT date_key
+    FROM gold.dim_date
+    WHERE date_key BETWEEN %(start)s AND %(end)s
+      AND (%(day_type)s = 'all' OR is_weekend = (%(day_type)s = 'weekend'))
+)"""
 
 
 def _agg(lo: str = "start", hi: str = "end") -> str:
@@ -119,91 +128,141 @@ SELECT d.year, d.month, SUM(a.trips) AS trips, SUM(a.revenue) AS revenue,
 {_agg()}
 GROUP BY d.year, d.month ORDER BY d.year, d.month"""
 
-SQL_KPI_DAILY = f"""
-SELECT d.date_key, SUM(a.trips) AS trips, SUM(a.revenue) AS revenue
-{_agg()}
-GROUP BY d.date_key ORDER BY d.date_key"""
+# Group on the fact table's date_key; dim joins only happen when a filter actually needs them.
+SQL_KPI_DAILY = """
+SELECT a.date_key, SUM(a.trips) AS trips, SUM(a.revenue) AS revenue
+FROM mart.agg_pickup_zone_day_band a
+LEFT JOIN gold.dim_date d
+       ON d.date_key = a.date_key AND %(day_type)s != 'all'
+LEFT JOIN gold.dim_location l
+       ON l.location_key = a.location_key AND %(borough)s IS NOT NULL
+WHERE a.date_key BETWEEN %(start)s AND %(end)s
+  AND (%(day_type)s = 'all' OR d.is_weekend = (%(day_type)s = 'weekend'))
+  AND (%(borough)s IS NULL OR l.borough = %(borough)s)
+GROUP BY a.date_key ORDER BY a.date_key"""
 
+# Needs: CREATE INDEX idx_dim_location_lookup ON gold.dim_location (location_key) INCLUDE (borough);
+# (run once in a migration, see backend/sql)
 SQL_KPI_Q1 = f"""
 SELECT SUM(a.revenue) AS revenue, SUM(a.duration_min) AS duration_min, SUM(a.distance_mi) AS distance_mi
 {_agg("q1_start", "q1_end")}"""
 
-# Where to be: pay vs wait (zone level). Pickups and dropoffs are rolled up separately, then joined.
+# Where to be: pay vs wait (zone level).
+# Borough filter prunes zones first, the min-trips threshold is a HAVING inside the pickup CTE,
+# and dropoffs are only aggregated for zones that survived (semi-join on pu).
 SQL_ZONES = f"""
-WITH pu AS (
-  SELECT a.location_key, SUM(a.trips) AS trips, SUM(a.revenue) AS revenue, SUM(a.duration_min) AS duration_min
-  FROM mart.agg_pickup_zone_day_band a
-  JOIN gold.dim_date d ON d.date_key = a.date_key
-  WHERE a.date_key BETWEEN %(start)s AND %(end)s AND {DAY}
-  GROUP BY a.location_key
-), dof AS (
-  SELECT x.location_key, SUM(x.trips) AS dropoffs
-  FROM mart.agg_dropoff_zone_day x
-  JOIN gold.dim_date d ON d.date_key = x.date_key
-  WHERE x.date_key BETWEEN %(start)s AND %(end)s AND {DAY}
-  GROUP BY x.location_key
+WITH {FILTERED_DATES},
+target_zones AS (
+    SELECT location_key, location_zone, borough
+    FROM gold.dim_location
+    WHERE location_key <> -1
+      AND (%(borough)s IS NULL OR borough = %(borough)s)
+),
+pu AS (
+    SELECT a.location_key, SUM(a.trips) AS trips, SUM(a.revenue) AS revenue,
+           SUM(a.duration_min) AS duration_min
+    FROM mart.agg_pickup_zone_day_band a
+    JOIN filtered_dates d ON d.date_key = a.date_key
+    JOIN target_zones tz  ON tz.location_key = a.location_key
+    GROUP BY a.location_key
+    HAVING SUM(a.trips) >= %(min_trips)s
+),
+dof AS (
+    SELECT x.location_key, SUM(x.trips) AS dropoffs
+    FROM mart.agg_dropoff_zone_day x
+    JOIN filtered_dates d ON d.date_key = x.date_key
+    JOIN pu               ON pu.location_key = x.location_key
+    GROUP BY x.location_key
 )
-SELECT l.location_zone AS name, l.borough, pu.trips, pu.revenue, pu.duration_min,
-       pu.revenue / (pu.duration_min / 60.0)                          AS rev_per_hour,
-       100.0 * (COALESCE(dof.dropoffs, 0) - pu.trips) / pu.trips      AS net_flow_pct
+SELECT tz.location_zone AS name, tz.borough, pu.trips, pu.revenue, pu.duration_min,
+       pu.revenue / NULLIF(pu.duration_min / 60.0, 0)                          AS rev_per_hour,
+       100.0 * (COALESCE(dof.dropoffs, 0) - pu.trips) / NULLIF(pu.trips, 0)    AS net_flow_pct
 FROM pu
-JOIN gold.dim_location l ON l.location_key = pu.location_key
-LEFT JOIN dof            ON dof.location_key = pu.location_key
-WHERE l.location_key <> -1 AND pu.trips >= %(min_trips)s AND {BOROUGH}
+JOIN target_zones tz ON tz.location_key = pu.location_key
+LEFT JOIN dof        ON dof.location_key = pu.location_key
 ORDER BY pu.trips DESC"""
 
-# Same thing rolled up to borough (ignores the borough filter, shows every borough)
+# Same thing rolled up to borough (ignores the borough filter, shows every borough).
+# Pickups come from the denormalised mart.agg_borough_day_hour (no dim_location join);
+# dropoffs are summed per zone first (~260 rows), then rolled up to borough.
 SQL_BOROUGH_FLOW = f"""
-WITH pu AS (
-  SELECT l.borough, SUM(a.trips) AS trips, SUM(a.revenue) AS revenue, SUM(a.duration_min) AS duration_min
-  FROM mart.agg_pickup_zone_day_band a
-  JOIN gold.dim_date d     ON d.date_key = a.date_key
-  JOIN gold.dim_location l ON l.location_key = a.location_key
-  WHERE a.date_key BETWEEN %(start)s AND %(end)s AND {DAY} AND l.location_key <> -1
-  GROUP BY l.borough
-), dof AS (
-  SELECT l.borough, SUM(x.trips) AS dropoffs
-  FROM mart.agg_dropoff_zone_day x
-  JOIN gold.dim_date d     ON d.date_key = x.date_key
-  JOIN gold.dim_location l ON l.location_key = x.location_key
-  WHERE x.date_key BETWEEN %(start)s AND %(end)s AND {DAY} AND l.location_key <> -1
-  GROUP BY l.borough
+WITH {FILTERED_DATES},
+pu AS (
+    SELECT h.borough, SUM(h.trips) AS trips, SUM(h.revenue) AS revenue,
+           SUM(h.duration_min) AS duration_min
+    FROM mart.agg_borough_day_hour h
+    JOIN filtered_dates d ON d.date_key = h.date_key
+    WHERE h.borough <> 'Unknown'
+    GROUP BY h.borough
+    HAVING SUM(h.trips) >= %(min_trips)s
+),
+dof_zone AS (
+    SELECT x.location_key, SUM(x.trips) AS dropoffs
+    FROM mart.agg_dropoff_zone_day x
+    JOIN filtered_dates d ON d.date_key = x.date_key
+    GROUP BY x.location_key
+),
+dof AS (
+    SELECT l.borough, SUM(dz.dropoffs) AS dropoffs
+    FROM dof_zone dz
+    JOIN gold.dim_location l ON l.location_key = dz.location_key
+    WHERE l.location_key <> -1
+    GROUP BY l.borough
 )
 SELECT pu.borough AS name, pu.borough, pu.trips, pu.revenue, pu.duration_min,
-       pu.revenue / (pu.duration_min / 60.0)                          AS rev_per_hour,
-       100.0 * (COALESCE(dof.dropoffs, 0) - pu.trips) / pu.trips      AS net_flow_pct
-FROM pu LEFT JOIN dof USING (borough)
-WHERE pu.borough IS NOT NULL AND pu.trips >= %(min_trips)s
+       pu.revenue / NULLIF(pu.duration_min / 60.0, 0)                          AS rev_per_hour,
+       100.0 * (COALESCE(dof.dropoffs, 0) - pu.trips) / NULLIF(pu.trips, 0)    AS net_flow_pct
+FROM pu
+LEFT JOIN dof USING (borough)
 ORDER BY pu.trips DESC"""
 
 # Top corridors: busiest pickup->dropoff pairs, with the reverse pair for "return flow".
 # Month grain: the range snaps to whole months. Intra-zone and unknown trips are excluded.
+# Pruning happens in WHERE; the reverse lookup only touches the 6 winning pairs
+# instead of self-joining the whole aggregated pair table.
 SQL_CORRIDORS = f"""
 WITH days AS (
-  SELECT COUNT(*) AS n FROM gold.dim_date d
-  WHERE d.date_key BETWEEN %(start_month)s * 100 + 1 AND %(end_month)s * 100 + 31 AND {DAY}
-), pairs AS (
-  SELECT c.pickup_location_key AS pu_key, c.dropoff_location_key AS do_key,
-         SUM(c.trips) AS trips, SUM(c.revenue) AS revenue, SUM(c.duration_min) AS duration_min
-  FROM mart.agg_corridor_month c
-  WHERE c.month_key BETWEEN %(start_month)s AND %(end_month)s
-    AND (%(day_type)s = 'all' OR c.is_weekend = (%(day_type)s = 'weekend'))
-  GROUP BY 1, 2
-), top6 AS (
-  SELECT p.* FROM pairs p
-  JOIN gold.dim_location l ON l.location_key = p.pu_key
-  WHERE p.pu_key <> p.do_key AND p.pu_key <> -1 AND p.do_key <> -1 AND {BOROUGH}
-  ORDER BY p.trips DESC LIMIT 6
+    SELECT COUNT(*) AS n FROM gold.dim_date d
+    WHERE d.date_key BETWEEN %(start_month)s * 100 + 1 AND %(end_month)s * 100 + 31 AND {DAY}
+),
+valid_pu_locations AS (
+    SELECT location_key, location_zone, borough
+    FROM gold.dim_location
+    WHERE location_key <> -1
+      AND (%(borough)s IS NULL OR borough = %(borough)s)
+),
+top6 AS (
+    SELECT c.pickup_location_key AS pu_key, c.dropoff_location_key AS do_key,
+           SUM(c.trips) AS trips, SUM(c.revenue) AS revenue, SUM(c.duration_min) AS duration_min
+    FROM mart.agg_corridor_month c
+    JOIN valid_pu_locations l ON l.location_key = c.pickup_location_key
+    WHERE c.month_key BETWEEN %(start_month)s AND %(end_month)s
+      AND (%(day_type)s = 'all' OR c.is_weekend = (%(day_type)s = 'weekend'))
+      AND c.dropoff_location_key <> -1
+      AND c.pickup_location_key <> c.dropoff_location_key
+    GROUP BY c.pickup_location_key, c.dropoff_location_key
+    ORDER BY trips DESC, pu_key, do_key
+    LIMIT 6
+),
+reverse_flows AS (
+    SELECT c.pickup_location_key AS pu_key, c.dropoff_location_key AS do_key,
+           SUM(c.trips) AS return_trips
+    FROM mart.agg_corridor_month c
+    JOIN top6 t ON t.do_key = c.pickup_location_key
+               AND t.pu_key = c.dropoff_location_key
+    WHERE c.month_key BETWEEN %(start_month)s AND %(end_month)s
+      AND (%(day_type)s = 'all' OR c.is_weekend = (%(day_type)s = 'weekend'))
+    GROUP BY c.pickup_location_key, c.dropoff_location_key
 )
 SELECT lf.location_zone AS from_zone, lt.location_zone AS to_zone,
-       t.trips::float8 / days.n                                AS trips_per_day,
-       t.revenue / (t.duration_min / 60.0)                     AS rev_per_hour,
-       100.0 * COALESCE(r.trips, 0) / t.trips                  AS return_flow_pct
+       t.trips::float8 / NULLIF(days.n, 0)                            AS trips_per_day,
+       t.revenue / NULLIF(t.duration_min / 60.0, 0)                   AS rev_per_hour,
+       100.0 * COALESCE(rf.return_trips, 0) / NULLIF(t.trips, 0)      AS return_flow_pct
 FROM top6 t
 CROSS JOIN days
 JOIN gold.dim_location lf ON lf.location_key = t.pu_key
 JOIN gold.dim_location lt ON lt.location_key = t.do_key
-LEFT JOIN pairs r ON r.pu_key = t.do_key AND r.do_key = t.pu_key
+LEFT JOIN reverse_flows rf ON rf.pu_key = t.do_key AND rf.do_key = t.pu_key
 ORDER BY t.trips DESC"""
 
 # Trip length sweet spot
@@ -214,44 +273,60 @@ SELECT a.length_band, SUM(a.trips) AS trips,
 GROUP BY a.length_band ORDER BY a.length_band"""
 
 # Slow windows: speed vs yield by pickup hour, or by time period
-_SLOW_WHERE = f"""
-WHERE h.date_key BETWEEN %(start)s AND %(end)s
-  AND (%(borough)s IS NULL OR h.borough = %(borough)s) AND {DAY}"""
-
 SQL_SLOW_HOUR = f"""
 SELECT h.hour AS bucket, SUM(h.trips) AS trips,
        SUM(h.revenue)     / (SUM(h.duration_min) / 60.0) AS rev_per_hour,
        SUM(h.distance_mi) / (SUM(h.duration_min) / 60.0) AS avg_mph
 FROM mart.agg_borough_day_hour h
 JOIN gold.dim_date d ON d.date_key = h.date_key
-{_SLOW_WHERE}
+WHERE h.date_key BETWEEN %(start)s AND %(end)s
+  AND (%(borough)s IS NULL OR h.borough = %(borough)s) AND {DAY}
 GROUP BY h.hour ORDER BY h.hour"""
 
+# Two-stage: collapse to 24 hourly rows first, then join the tiny hour_period lookup.
 SQL_SLOW_PERIOD = f"""
-SELECT p.time_period AS bucket, SUM(h.trips) AS trips,
-       SUM(h.revenue)     / (SUM(h.duration_min) / 60.0) AS rev_per_hour,
-       SUM(h.distance_mi) / (SUM(h.duration_min) / 60.0) AS avg_mph
-FROM mart.agg_borough_day_hour h
-JOIN gold.dim_date d     ON d.date_key = h.date_key
-JOIN mart.hour_period p  ON p.hour = h.hour
-{_SLOW_WHERE}
+WITH {FILTERED_DATES},
+hourly_summary AS (
+    SELECT h.hour, SUM(h.trips) AS trips, SUM(h.revenue) AS revenue,
+           SUM(h.duration_min) AS duration_min, SUM(h.distance_mi) AS distance_mi
+    FROM mart.agg_borough_day_hour h
+    JOIN filtered_dates d ON d.date_key = h.date_key
+    WHERE (%(borough)s IS NULL OR h.borough = %(borough)s)
+    GROUP BY h.hour
+)
+SELECT p.time_period AS bucket, SUM(hs.trips) AS trips,
+       SUM(hs.revenue)     / NULLIF(SUM(hs.duration_min) / 60.0, 0) AS rev_per_hour,
+       SUM(hs.distance_mi) / NULLIF(SUM(hs.duration_min) / 60.0, 0) AS avg_mph
+FROM hourly_summary hs
+JOIN mart.hour_period p ON p.hour = hs.hour
 GROUP BY p.time_period
 ORDER BY array_position(ARRAY['Morning','Afternoon','Evening','Night','Late Night'], p.time_period)"""
 
-# Monthly demand vs normal: trips per calendar day in each month
-SQL_MONTHLY_DEMAND = f"""
-WITH m AS (
-  SELECT d.year, d.month, SUM(a.trips) AS trips
-  {_agg()}
-  GROUP BY d.year, d.month
-), n AS (
-  SELECT d.year, d.month, COUNT(*) AS n_days
-  FROM gold.dim_date d
-  WHERE d.date_key BETWEEN %(start)s AND %(end)s AND {DAY}
-  GROUP BY d.year, d.month
+# Monthly demand vs normal: trips per calendar day in each month.
+# Reads mart.agg_borough_day_hour (no zone/length-band grain, no dim_location join);
+# calendar-day counts come from a window function over the filtered dates.
+SQL_MONTHLY_DEMAND = """
+WITH date_filter AS (
+    SELECT year, month, date_key,
+           COUNT(*) OVER (PARTITION BY year, month) AS n_days
+    FROM gold.dim_date
+    WHERE date_key BETWEEN %(start)s AND %(end)s
+      AND (%(day_type)s = 'all' OR is_weekend = (%(day_type)s = 'weekend'))
+),
+monthly_calendar_days AS (
+    SELECT DISTINCT year, month, n_days FROM date_filter
+),
+monthly_trips AS (
+    SELECT d.year, d.month, SUM(h.trips) AS trips
+    FROM mart.agg_borough_day_hour h
+    JOIN date_filter d ON d.date_key = h.date_key
+    WHERE (%(borough)s IS NULL OR h.borough = %(borough)s)
+    GROUP BY d.year, d.month
 )
-SELECT m.year, m.month, m.trips, n.n_days, m.trips::float8 / n.n_days AS trips_per_day
-FROM m JOIN n USING (year, month)
+SELECT m.year, m.month, m.trips, c.n_days,
+       m.trips::float8 / NULLIF(c.n_days, 0) AS trips_per_day
+FROM monthly_trips m
+JOIN monthly_calendar_days c USING (year, month)
 ORDER BY m.year, m.month"""
 
 # ------------------------------------------------------------------ helpers
